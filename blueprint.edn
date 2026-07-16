@@ -1,0 +1,12 @@
+{:itonami.blueprint/id "cloud-itonami-5021"
+ :itonami.blueprint/name "Inland Passenger Water Transport"
+ :itonami.blueprint/isic-rev5 "5021"
+ :itonami.blueprint/domain :transport/inland-water-passenger
+ :itonami.blueprint/license "AGPL-3.0-or-later"
+ :itonami.blueprint/social-impact [:passenger-safety :public-transit :rural-connectivity]
+ :itonami.blueprint/governor :ferry-dispatch-governor
+ :itonami.blueprint/robotics true
+ :itonami.blueprint/required-technologies [:robotics :identity :forms :dmn :bpmn :audit-ledger :logistics]
+ :itonami.blueprint/optional-technologies []
+ :itonami.blueprint/status :public-oss
+ :itonami.blueprint/maturity :implemented}
