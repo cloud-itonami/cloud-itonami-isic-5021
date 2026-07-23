@@ -1,4 +1,4 @@
-{:itonami.blueprint/id "cloud-itonami-5021"
+{:itonami.blueprint/id "cloud-itonami-isic-5021"
  :itonami.blueprint/name "Inland Passenger Water Transport"
  :itonami.blueprint/isic-rev5 "5021"
  :itonami.blueprint/domain :transport/inland-water-passenger
