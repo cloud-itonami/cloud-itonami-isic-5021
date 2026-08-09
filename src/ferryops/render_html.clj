@@ -1,0 +1,242 @@
+(ns ferryops.render-html
+  "Build-time HTML renderer for `docs/samples/operator-console.html`.
+
+  Closes flagship checklist item 2 (com-junkawasaki/root ADR-2607189300,
+  Wave2 flagship item2): this repo previously had NO demo page and no
+  generator at all. This namespace drives the REAL actor stack
+  (`ferryops.operation` -> `ferryops.governor` -> `ferryops.store`)
+  through a scenario adapted from this repo's own `ferryops.sim` demo
+  driver (`clojure -M:dev:run`, confirmed BEFORE writing this file to
+  produce a sensible ledger against the real seeded route/contractor
+  ids -- `route-1`..`route-3`, `contractor-1`..`contractor-2` match
+  `ferryops.store/demo-data`, so it was safe to reuse rather than
+  author from scratch), trimmed to a representative subset at phase 3
+  (supervised-auto): one full log -> schedule -> low-cost maintenance
+  -> high-cost maintenance (approved) -> safety-concern (approved)
+  lifecycle on a verified route, and four distinct HARD-hold reasons
+  (unregistered route, registered-but-unverified route, unverified
+  contractor, scope-excluded content). Rendered deterministically --
+  no invented numbers, no timestamps in the page content, byte-
+  identical across reruns against the same seed (verify by diffing two
+  consecutive runs).
+
+  Usage: `clojure -M:dev:render-html [out-file]`
+  (default `docs/samples/operator-console.html`)."
+  (:require [jp-go-dds.skin]
+            [clojure.string :as str]
+            [ferryops.store :as store]
+            [ferryops.operation :as op]
+            [ferryops.advisor :as advisor]
+            [ferryops.phase :as phase]
+            [ferryops.governor :as governor]
+            [langgraph.graph :as g]))
+
+(def ^:private coordinator
+  {:actor-id "coord-1" :actor-role :ferry-dispatch-coordinator :phase 3})
+
+(defn- exec! [actor tid request]
+  (g/run* actor {:request request :context coordinator} {:thread-id tid}))
+
+(defn- approve! [actor tid]
+  (g/run* actor {:approval {:status :approved :by "dispatch-coordinator-1"}}
+          {:thread-id tid :resume? true}))
+
+(defn run-demo!
+  "Runs a fresh seeded store through a scenario mixing every
+  disposition this actor can reach: route-1 clears a service-record
+  log (auto-commit clean at phase 3), a crossing/timetable schedule
+  (auto-commit clean at phase 3), and a low-cost maintenance-order
+  naming verified contractor-1 (auto-commit clean); route-1's high-cost
+  maintenance order ALWAYS escalates (above
+  `ferryops.governor/maintenance-cost-threshold`) -- approved; its
+  safety-concern flag ALWAYS escalates (permanently high-stakes, never
+  auto at any phase) -- approved. route-99 (does not exist) HARD-holds
+  on `:route-unverified`; route-3 (registered but vessel/operator-
+  license not yet verified) HARD-holds on the same rule, showing the
+  distinct 'unregistered' vs 'registered-but-unverified' ground states;
+  a maintenance-order naming contractor-2 (registered but unverified)
+  HARD-holds on `:contractor-unverified`; a schedule proposal whose
+  advisor claims `:effect :commit` HARD-holds on `:effect-not-propose`;
+  a log whose advisor drifts into seaworthiness/capacity/captain-
+  fitness finalization HARD-holds on `:scope-excluded`. Every HARD hold
+  never reaches a human. Returns the resulting store -- every field
+  read by `render` below is real governor/store output, not a hand-
+  typed copy."
+  []
+  (let [db (store/seed-db)
+        actor (op/build db)]
+    (exec! actor "t1" {:op :log-service-record :route-id "route-1"
+                       :patch {:crossings-completed 6 :passengers 214 :incident-reports 0}})
+
+    (exec! actor "t2" {:op :schedule-crossing-operation :route-id "route-1"
+                       :patch {:crossing "afternoon-loop" :date "2026-07-20" :window "13:00-17:00"}})
+
+    (exec! actor "t3" {:op :coordinate-maintenance-order :route-id "route-1"
+                       :patch {:item "engine inspection service" :estimated-cost 650.0
+                               :contractor-id "contractor-1"}})
+
+    (exec! actor "t4" {:op :coordinate-maintenance-order :route-id "route-1"
+                       :patch {:item "hull dry-dock overhaul" :estimated-cost 8600.0
+                               :contractor-id "contractor-1"}})
+    (approve! actor "t4")
+
+    (exec! actor "t5" {:op :flag-safety-concern :route-id "route-1"
+                       :patch {:concern "observed unusual list to port during boarding, peak-hour ridership approaching posted capacity"
+                               :confidence 0.92}})
+    (approve! actor "t5")
+
+    (exec! actor "t6" {:op :log-service-record :route-id "route-99"
+                       :patch {:crossings-completed 0}})
+
+    (exec! actor "t7" {:op :log-service-record :route-id "route-3"
+                       :patch {:crossings-completed 1}})
+
+    (exec! actor "t8" {:op :coordinate-maintenance-order :route-id "route-1"
+                       :patch {:item "dock-side repair" :estimated-cost 300.0
+                               :contractor-id "contractor-2"}})
+
+    (let [actor-direct (op/build db {:advisor (reify advisor/Advisor
+                                                (-advise [_ _ req]
+                                                  (assoc (advisor/infer nil req) :effect :commit)))})]
+      (exec! actor-direct "t9" {:op :schedule-crossing-operation :route-id "route-1"
+                                :patch {:crossing "weekday-loop" :date "2026-07-22"}}))
+
+    (exec! actor "t10" {:op :log-service-record :route-id "route-1"
+                        :out-of-scope? true
+                        :patch {}})
+    db))
+
+;; ----------------------------- rendering -----------------------------
+
+(defn- esc [v]
+  (-> (str v)
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")))
+
+(defn- last-fact-for [ledger route-id]
+  (last (filter #(= (:route-id %) route-id) ledger)))
+
+(defn- status-cell [ledger route-id]
+  (let [f (last-fact-for ledger route-id)]
+    (cond
+      (nil? f) "<span class=\"muted\">no activity</span>"
+      (= :committed (:t f)) "<span class=\"ok\">committed</span>"
+      (= :approval-granted (:t f)) "<span class=\"ok\">approved &amp; committed</span>"
+      (= :governor-hold (:t f))
+      (let [rule (-> f :violations first :rule)]
+        (str "<span class=\"critical\">HARD hold &middot; " (esc (name (or rule :unknown))) "</span>"))
+      (= :approval-requested (:t f)) "<span class=\"warn\">awaiting approval</span>"
+      :else "<span class=\"muted\">in progress</span>")))
+
+(defn- bool-cell [v] (if v "<span class=\"ok\">yes</span>" "<span class=\"err\">no</span>"))
+
+(defn- route-row [ledger {:keys [route-id name vessel-id registered? verified?]}]
+  (format "        <tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+          (esc route-id) (esc name) (esc vessel-id)
+          (bool-cell registered?) (bool-cell verified?)
+          (status-cell ledger route-id)))
+
+(defn- contractor-row [{:keys [contractor-id name registered? verified?]}]
+  (format "        <tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+          (esc contractor-id) (esc name)
+          (bool-cell registered?) (bool-cell verified?)))
+
+(defn- ledger-row [{:keys [t op route-id basis]}]
+  (format "        <tr><td>%s</td><td><code>%s</code></td><td>%s</td><td>%s</td></tr>"
+          (esc (name t)) (esc (name (or op :n-a))) (esc (or route-id ""))
+          (esc (or (some->> basis (map name) (str/join ", ")) ""))))
+
+(def ^:private action-gate-rows
+  ;; Static description of this actor's own closed op contract
+  ;; (README `Ops`, `ferryops.governor`/`ferryops.phase`) --
+  ;; documentation of fixed behavior, not runtime telemetry, so it is
+  ;; legitimately hand-described rather than derived from a live run.
+  ["        <tr><td><code>:log-service-record</code></td><td><span class=\"ok\">phase-3 auto-commit when clean · HARD on route-unverified</span></td></tr>"
+   "        <tr><td><code>:schedule-crossing-operation</code></td><td><span class=\"ok\">phase-3 auto-commit when clean · HARD on route-unverified / effect-not-propose</span></td></tr>"
+   "        <tr><td><code>:coordinate-maintenance-order</code></td><td><span class=\"warn\">phase-3 auto-commit below cost threshold · ALWAYS human approval above it · HARD on contractor-unverified</span></td></tr>"
+   "        <tr><td><code>:flag-safety-concern</code></td><td><span class=\"warn\">ALWAYS human approval · never auto at any phase · high-stakes</span></td></tr>"])
+
+(defn render
+  "Renders the full operator-console.html document from a store `db`
+  that has already run `run-demo!` (or any other real scenario)."
+  [db]
+  (let [ledger (vec (store/ledger db))
+        routes (store/all-route-records db)
+        contractors (store/all-contractor-records db)
+        route-rows (str/join "\n" (map (partial route-row ledger) routes))
+        contractor-rows (str/join "\n" (map contractor-row contractors))
+        ledger-rows (str/join "\n" (map ledger-row ledger))
+        hard-holds (count (filter #(= :governor-hold (:t %)) ledger))]
+    (str
+     "<html><head><meta charset=\"utf-8\"><title>cloud-itonami-isic-5021 &middot; inland-passenger-water-transport</title><style>"
+     (jp-go-dds.skin/dds+skin)
+     "</style></head><body>\n"
+     "<header class=\"bar\">\n"
+     "  <h1>Inland passenger water transport (ISIC 5021) — Operator Console</h1>\n"
+     "  <span class=\"badge\">read-only sample · governor-gated · safety-concern always human-approved · phase "
+     phase/default-phase " (" (esc (:label (get phase/phases phase/default-phase))) ")</span>\n"
+     "</header>\n"
+     "<main>\n"
+     "  <section class=\"card\">\n"
+     "    <h2>Ferry routes / crossings</h2>\n"
+     "    <p class=\"muted\">Demo snapshot — build-time-generated from <code>ferryops.store</code> via <code>ferryops.render-html</code> (<code>clojure -M:dev:render-html</code>). HARD holds this run: "
+     hard-holds ".</p>\n"
+     "    <table>\n"
+     "      <thead><tr><th>Route</th><th>Name</th><th>Vessel</th><th>Registered</th><th>Verified</th><th>Last op status</th></tr></thead>\n"
+     "      <tbody>\n"
+     route-rows "\n"
+     "      </tbody>\n"
+     "    </table>\n"
+     "  </section>\n"
+     "  <section class=\"card\">\n"
+     "    <h2>Maintenance contractors</h2>\n"
+     "    <p class=\"muted\">Vessel-maintenance counterparties — a <code>:coordinate-maintenance-order</code> naming an unverified contractor is a HARD hold (flagship check unique to this vertical among 50xx siblings).</p>\n"
+     "    <table>\n"
+     "      <thead><tr><th>Contractor</th><th>Name</th><th>Registered</th><th>Verified</th></tr></thead>\n"
+     "      <tbody>\n"
+     contractor-rows "\n"
+     "      </tbody>\n"
+     "    </table>\n"
+     "  </section>\n"
+     "  <section class=\"card\">\n"
+     "    <h2>Action gate (Ferry Dispatch Governor)</h2>\n"
+     "    <p class=\"muted\">HARD holds cannot be overridden. Route vessel/operator-license status and contractor registration are re-derived from the store, never trusted from a proposal. Directly finalizing a vessel-seaworthiness clearance, overriding a certified passenger-capacity limit, or making a captain-fitness determination is permanently out of scope. High-stakes ops: "
+     (esc (str/join ", " (map name governor/always-escalate-ops)))
+     ". Maintenance cost threshold: "
+     (esc (str governor/maintenance-cost-threshold)) ".</p>\n"
+     "    <table>\n"
+     "      <thead><tr><th>Op</th><th>Gate</th></tr></thead>\n"
+     "      <tbody>\n"
+     (str/join "\n" action-gate-rows) "\n"
+     "      </tbody>\n"
+     "    </table>\n"
+     "  </section>\n"
+     "  <section class=\"card\">\n"
+     "    <h2>Audit ledger (this run)</h2>\n"
+     "    <p class=\"muted\">Append-only decision-fact log — every proposal, hold and commit this scenario produced.</p>\n"
+     "    <table>\n"
+     "      <thead><tr><th>Fact</th><th>Op</th><th>Route</th><th>Basis</th></tr></thead>\n"
+     "      <tbody>\n"
+     ledger-rows "\n"
+     "      </tbody>\n"
+     "    </table>\n"
+     "  </section>\n"
+     "</main>\n"
+     "</body></html>\n")))
+
+(defn -main [& args]
+  (let [out (or (first args) "docs/samples/operator-console.html")
+        db (run-demo!)
+        html (render db)
+        parent (.getParentFile (java.io.File. out))
+        hard-holds (count (filter #(= :governor-hold (:t %)) (store/ledger db)))]
+    (when parent (.mkdirs parent))
+    (spit out html)
+    (println "wrote" out "(" (count (store/ledger db)) "ledger facts,"
+             (count (store/coordination-log db)) "coordination records,"
+             hard-holds "HARD holds )")
+    (when (< hard-holds 1)
+      (binding [*out* *err*]
+        (println "ERROR: expected ≥1 HARD hold, got" hard-holds))
+      (System/exit 1))))
