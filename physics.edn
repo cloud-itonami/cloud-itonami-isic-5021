@@ -1,0 +1,34 @@
+;; What this vertical's robot physically does, declared for
+;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:dev:physics` runs it.
+;;
+;; README "Robotics premise": dock-side gangway/mooring assistance, ticketing
+;; kiosks and telemetry sensor upkeep for a sea/coastal passenger ferry
+;; operator (ISIC 5021). Physical work modelled here: a luggage/assist cart
+;; crossing the boarding gangway (whose grade changes with the tide), and an
+;; arm placing a mooring-line eye over a bollard.
+;;
+;; Every number without a cited source is marked `estimate` in its :basis.
+;; Replacing an estimate with a sourced value is this bot's growth work.
+{:physics/schema "itonami.physical-ai.spec.v1"
+ :repo "cloud-itonami/cloud-itonami-isic-5021"
+ :cases
+ [{:id :gangway-luggage-cart
+   :kind :transport
+   :procedure "assist cart carries passenger luggage up the boarding gangway from the pontoon to the ferry deck"
+   :params {:mass-kg 80.0 :payload-kg 60.0 :distance-m 15.0 :v-max-mps 0.8 :a-max-mps2 0.4
+            :brake-decel-mps2 0.8 :drive-force-n 400.0 :crr 0.02
+            :cog-height-m 0.40 :support-half-length-m 0.35 :payload-cog-height-m 0.80
+            :max-time-s 600.0}
+   :sweep {:param :slope-deg :values [0.0 4.0 8.0 12.0 16.0 20.0]}
+   :quantity :min-tipover-margin
+   :limit {:min 0.35 :basis "estimate: keep at least 35 % of the static tip-over margin on a wet, moving gangway (deck motion not modelled)"}
+   :boundary {:lo 0.0 :hi 25.0}}
+  {:id :mooring-eye-to-bollard
+   :kind :manipulator
+   :procedure "dock arm lifts the eye of a mooring line from the quay edge and drops it over the bollard"
+   :params {:l1-m 0.90 :l2-m 0.80 :m1-kg 18.0 :m2-kg 12.0
+            :from [1.20 -0.20] :to [0.60 0.90] :duration-s 3.0 :steps 500}
+   :sweep {:param :payload-kg :values [5.0 10.0 15.0 20.0 30.0]}
+   :quantity :peak-tau1-nm
+   :limit {:max 700.0 :basis "estimate: continuous shoulder torque of a ~25 kg-payload industrial arm class"}
+   :boundary {:lo 1.0 :hi 100.0}}]}
