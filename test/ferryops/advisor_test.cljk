@@ -1,6 +1,6 @@
 (ns ferryops.advisor-test
   "Unit tests of `ferryops.advisor` proposal generation."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [ferryops.advisor :as adv]
             [ferryops.store :as store]))
 

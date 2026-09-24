@@ -1,6 +1,6 @@
 (ns ferryops.store-contract-test
   "Contract tests for `ferryops.store/Store` protocol."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [ferryops.store :as store]))
 
 (deftest mem-store-route-lookup
