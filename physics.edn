@@ -2,7 +2,7 @@
 ;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:dev:physics` runs it.
 ;;
 ;; README "Robotics premise": dock-side gangway/mooring assistance, ticketing
-;; kiosks and telemetry sensor upkeep for a sea/coastal passenger ferry
+;; kiosks and telemetry sensor upkeep for an inland (river/lake/canal) passenger ferry
 ;; operator (ISIC 5021). Physical work modelled here: a luggage/assist cart
 ;; crossing the boarding gangway (whose grade changes with the tide), and an
 ;; arm placing a mooring-line eye over a bollard.
